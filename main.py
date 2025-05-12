@@ -14,7 +14,7 @@ from train import train
 from utils.read_write import read_waveform_data, save_spectrogram_image
 from utils.transform import compute_spectrogram
 
-TESTING_LIMIT: int = 5
+TESTING_LIMIT: int = 50
 
 def main_preprocess(data_path: str, output_path: str, spec_height: int, spec_ext: str,
                     e_id_col: str, samp_fs_col: str, last_md_col: str,

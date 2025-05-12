@@ -48,7 +48,7 @@ def compute_spectrogram(waveform: np.ndarray,
     # Color mapping
     if color_mode == 'grayscale':
         img = (resized * 255).astype(np.uint8)
-        cmap_func = plt.cm.gray
+        cmap_func = cm.get_cmap('gray')
     elif color_mode == 'color':
         cmap_func = cm.get_cmap('inferno')
         img = (cmap_func(resized)[:, :, :3] * 255).astype(np.uint8)
@@ -60,7 +60,10 @@ def compute_spectrogram(waveform: np.ndarray,
 
     # Add labels using matplotlib
     fig, ax = plt.subplots(figsize=(target_width / 100, output_height / 100), dpi=100)
-    extent = [t[0], t[-1], f_cropped[-1], f_cropped[0]]  # note: f_cropped is flipped
+    extent = (
+        float(t[0]), float(t[-1]),
+        float(f_cropped[0]), float(f_cropped[-1])
+    )
     ax.imshow(resized, aspect='auto', extent=extent, origin='lower', cmap=cmap_func)
     plt.tight_layout()
 
