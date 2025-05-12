@@ -39,7 +39,7 @@ class ConditionalUNet(nn.Module):
         # Up
         self.up2 = nn.ConvTranspose2d(base_channels*8, base_channels*2, 4, 2, 1)
         self.film_up2 = FiLM(base_channels*2, cond_dim+time_emb_dim)
-        self.up1 = nn.ConvTranspose2d(base_channels*4, base_channels,   4, 2, 1)
+        self.up1 = nn.ConvTranspose2d(base_channels*4, base_channels, 4, 2, 1)
         self.film_up1 = FiLM(base_channels, cond_dim+time_emb_dim)
 
         # Final

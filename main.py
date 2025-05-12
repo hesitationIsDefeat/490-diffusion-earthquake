@@ -14,19 +14,22 @@ from train import train
 from utils.read_write import read_waveform_data, save_spectrogram_image
 from utils.transform import compute_spectrogram
 
-def main_preprocess(data_path: str, output_path: str, spec_dim: tuple[int, int], spec_ext: str,
+TESTING_LIMIT: int = 5
+
+def main_preprocess(data_path: str, output_path: str, spec_height: int, spec_ext: str,
                     e_id_col: str, samp_fs_col: str, last_md_col: str,
-                    stft_color_mode: str):
+                    stft_color_mode: str, is_testing: bool):
     df, waveforms = read_waveform_data(data_path=data_path, last_md_col=last_md_col)
     os.makedirs(output_path, exist_ok=True)
-    for idx, row in df.iterrows():
+    iteration_amount: int = TESTING_LIMIT if is_testing else len(df)
+    for idx, row in df.head(iteration_amount).iterrows():
         e_id = row[e_id_col]
         fs = row[samp_fs_col]
         img = compute_spectrogram(
             waveform=waveforms[idx],
             samp_fs=fs,
             color_mode=stft_color_mode,
-            output_size=spec_dim
+            output_height=spec_height
         )
         save_spectrogram_image(img=img, e_id=e_id, output_dir=output_path, extension=spec_ext)
 
@@ -92,6 +95,7 @@ def main_sample(data_path: str, model_path: str, spec_dim: tuple[int, int], colo
 SPEC_DIM_WIDTH: int = 256
 SPEC_DIM_HEIGHT: int = 256
 SPEC_EXTENSION: str = "png"
+IS_TESTING: bool = True
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Preprocess, Train, or Sample for diffusion STFT')
@@ -101,13 +105,13 @@ if __name__ == '__main__':
     p_pre = subparsers.add_parser('preprocess')
     p_pre.add_argument('--data-path', default="data/input/train/ew.csv")
     p_pre.add_argument('--output-path', default="data/output/spec/ew")
-    p_pre.add_argument('--spec-dim-width', type=int, default=SPEC_DIM_WIDTH)
     p_pre.add_argument('--spec-dim-height', type=int, default=SPEC_DIM_HEIGHT)
     p_pre.add_argument('--event-id-col', default="EventID")
     p_pre.add_argument('--sampling-fs-col', default="SamplingRate")
     p_pre.add_argument('--last-metadata-col', default="NumFreqSteps")
     p_pre.add_argument('--spec-color-mode', choices=["grayscale", "color"], default="color")
     p_pre.add_argument('--spec-ext', choices=["png"], default=SPEC_EXTENSION)
+    p_pre.add_argument('--is-testing', type=bool, default=IS_TESTING)
 
     # Train
     p_tr = subparsers.add_parser('train')
@@ -156,9 +160,10 @@ if __name__ == '__main__':
 
     if args.command == 'preprocess':
         main_preprocess(
-            data_path=args.data_path, output_path=args.output_path, spec_dim=(args.spec_dim_width, args.spec_dim_height), spec_ext=args.spec_ext,
+            data_path=args.data_path, output_path=args.output_path, spec_height=args.spec_dim_height, spec_ext=args.spec_ext,
             e_id_col=args.event_id_col, samp_fs_col=args.sampling_fs_col, last_md_col=args.last_metadata_col,
-            stft_color_mode=args.spec_color_mode
+            stft_color_mode=args.spec_color_mode,
+            is_testing=args.is_testing
         )
     elif args.command == 'train':
         main_train(

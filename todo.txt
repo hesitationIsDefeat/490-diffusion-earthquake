@@ -1,0 +1,3 @@
+- Normalization for each earthquake
+- griffin lim for inverse STFT
+- MLP for amp
