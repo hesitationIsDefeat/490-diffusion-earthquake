@@ -12,9 +12,9 @@ from models.u_net import ConditionalUNet
 from sample import sample
 from train import train
 from utils.read_write import read_waveform_data, save_spectrogram_image
-from utils.transform import compute_spectrogram
+from utils.transform import compute_spectrogram_raw, compute_spectrogram_labeled
 
-TESTING_LIMIT: int = 50
+TESTING_LIMIT: int = 5
 
 def main_preprocess(data_path: str, output_path: str, spec_height: int, spec_ext: str,
                     e_id_col: str, samp_fs_col: str, last_md_col: str,
@@ -25,13 +25,16 @@ def main_preprocess(data_path: str, output_path: str, spec_height: int, spec_ext
     for idx, row in df.head(iteration_amount).iterrows():
         e_id = row[e_id_col]
         fs = row[samp_fs_col]
-        img = compute_spectrogram(
+        img, times, freq, norm = compute_spectrogram_raw(
             waveform=waveforms[idx],
             samp_fs=fs,
             color_mode=stft_color_mode,
             output_height=spec_height
         )
-        save_spectrogram_image(img=img, e_id=e_id, output_dir=output_path, extension=spec_ext)
+        labeled_img = compute_spectrogram_labeled(img, times, freq, norm, stft_color_mode)
+        save_spectrogram_image(img=img, e_id=e_id, output_dir=output_path, extension=spec_ext, file_name='raw', color_mode=stft_color_mode)
+        save_spectrogram_image(img=labeled_img, e_id=e_id, output_dir=output_path, extension=spec_ext, file_name='labeled', color_mode=stft_color_mode)
+
 
 
 def main_train(data_path: str, spec_dir: str, spec_dim: tuple[int, int], color_mode: str, spec_ext: str,
@@ -79,7 +82,7 @@ def main_sample(data_path: str, model_path: str, spec_dim: tuple[int, int], colo
     for idx, row in df.head(num_samples).iterrows():
         cond = torch.tensor([
             row[lat_col], row[lon_col], row[dep_col], row[mag_col]
-        ], dtype=torch.float32, device=device_name).unsqueeze(0)
+        ], dtype=torch.float32, device=device).unsqueeze(0)
 
         shape = (1, 3, *spec_dim) if color_mode == 'color' else (1, 1, *spec_dim)
         x_gen = sample(model, diffusion, cond, shape)
@@ -88,14 +91,17 @@ def main_sample(data_path: str, model_path: str, spec_dim: tuple[int, int], colo
         if img.dim() == 3:  # (C, H, W)
             img = img.permute(1, 2, 0)  # (H, W, C)
 
-        img = (img.numpy() * 255).astype(np.uint8)
+        # img = (img.numpy() * 255).astype(np.uint8)
+        img = img.clamp(0, 1)  # Ensure valid range
+        img = (img * 255).round().to(torch.uint8).numpy()  # Convert to uint8 safely
 
-        save_spectrogram_image(img=img, e_id=f"{row[e_id_col]}_sample", output_dir=sample_save_dir, extension=spec_ext)
+        save_spectrogram_image(img=img, e_id=row[e_id_col], output_dir=sample_save_dir, extension=spec_ext, file_name='sample_raw', color_mode=color_mode)
 
 SPEC_DIM_WIDTH: int = 256
 SPEC_DIM_HEIGHT: int = 256
 SPEC_EXTENSION: str = "png"
-IS_TESTING: bool = True
+IS_TESTING: bool = False
+COLOR_MODE: str = "grayscale"
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Preprocess, Train, or Sample for diffusion STFT')
@@ -109,7 +115,7 @@ if __name__ == '__main__':
     p_pre.add_argument('--event-id-col', default="EventID")
     p_pre.add_argument('--sampling-fs-col', default="SamplingRate")
     p_pre.add_argument('--last-metadata-col', default="NumFreqSteps")
-    p_pre.add_argument('--spec-color-mode', choices=["grayscale", "color"], default="color")
+    p_pre.add_argument('--spec-color-mode', choices=["grayscale", "color"], default=COLOR_MODE)
     p_pre.add_argument('--spec-ext', choices=["png"], default=SPEC_EXTENSION)
     p_pre.add_argument('--is-testing', type=bool, default=IS_TESTING)
 
@@ -119,10 +125,10 @@ if __name__ == '__main__':
     p_tr.add_argument('--spec-dir', default="data/output/spec/ew")
     p_tr.add_argument('--spec-dim-width', type=int, default=SPEC_DIM_WIDTH)
     p_tr.add_argument('--spec-dim-height', type=int, default=SPEC_DIM_HEIGHT)
-    p_tr.add_argument('--spec-color-mode', choices=["grayscale", "color"], default="color")
+    p_tr.add_argument('--spec-color-mode', choices=["grayscale", "color"], default=COLOR_MODE)
     p_tr.add_argument('--spec-ext', choices=["png"], default=SPEC_EXTENSION)
-    p_tr.add_argument('--batch-size', type=int, default=16)
-    p_tr.add_argument('--epochs', type=int, default=1000)
+    p_tr.add_argument('--batch-size', type=int, default=32)
+    p_tr.add_argument('--epochs', type=int, default=50)
     p_tr.add_argument('--lr', type=float, default=1e-4)
     p_tr.add_argument('--model-save-path', default="models/ddpm.pth")
     p_tr.add_argument('--device', default="cuda")
@@ -142,10 +148,10 @@ if __name__ == '__main__':
     p_sm.add_argument('--spec-dir', default="data/output/spec/ew")
     p_sm.add_argument('--spec-dim-width', type=int, default=SPEC_DIM_WIDTH)
     p_sm.add_argument('--spec-dim-height', type=int, default=SPEC_DIM_HEIGHT)
-    p_sm.add_argument('--spec-color-mode', choices=["grayscale", "color"], default="color")
+    p_sm.add_argument('--spec-color-mode', choices=["grayscale", "color"], default=COLOR_MODE)
     p_sm.add_argument('--spec-ext', choices=["png"], default=SPEC_EXTENSION)
-    p_sm.add_argument('--num-samples', type=int, default=20)
-    p_sm.add_argument('--sample-save-dir', default="data/output/samples")
+    p_sm.add_argument('--num-samples', type=int, default=200)
+    p_sm.add_argument('--sample-save-dir', default="data/output/spec/ew")
     p_sm.add_argument('--device', default="cuda")
     p_sm.add_argument('--event-id-col', default="EventID", help='Name of the event id column')
     p_sm.add_argument('--lat-col', default="EventLat", help='Name of the latitude column')

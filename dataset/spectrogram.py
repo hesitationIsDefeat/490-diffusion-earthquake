@@ -18,7 +18,7 @@ class SpectrogramDataset(Dataset):
         self.depth_col = depth_col
         self.mag_col = mag_col
         self.img_size = img_size
-        self.mode = color_mode
+        self.color_mode = color_mode
 
     def __len__(self):
         return len(self.df)
@@ -26,8 +26,8 @@ class SpectrogramDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        img_path = f"{os.path.join(self.spec_dir, str(row[self.e_id_col]))}.{self.spec_ext}"
-        img = Image.open(img_path).convert('RGB' if self.mode=='color' else 'L')
+        img_path = f"{os.path.join(self.spec_dir, str(row[self.e_id_col]), self.color_mode, 'raw')}.{self.spec_ext}"
+        img = Image.open(img_path).convert('RGB' if self.color_mode == 'color' else 'L')
         img = img.resize(self.img_size)
         spec = np.array(img, dtype=np.float32) / 255.0  # normalize to [0,1]
 
@@ -39,7 +39,7 @@ class SpectrogramDataset(Dataset):
         ], dtype=np.float32)
 
         import torch
-        spec_t = torch.from_numpy(spec).permute(2,0,1) if self.mode=='color' \
+        spec_t = torch.from_numpy(spec).permute(2,0,1) if self.color_mode == 'color' \
                  else torch.from_numpy(spec).unsqueeze(0)
         cond_t = torch.from_numpy(cond)
 
