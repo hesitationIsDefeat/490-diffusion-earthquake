@@ -1,10 +1,13 @@
 import numpy as np
+import pandas as pd
 from scipy.signal import stft
 from skimage.transform import resize
 from typing import Tuple
 from matplotlib import cm, pyplot as plt
 from io import BytesIO
 from PIL import Image
+import torch
+
 
 def compute_spectrogram_raw(waveform: np.ndarray,
                         samp_fs: float,
@@ -79,3 +82,65 @@ def compute_spectrogram_labeled(image: np.ndarray,
     buf.close()
 
     return labeled_img
+
+
+import os
+import json
+import numpy as np
+import pandas as pd
+
+
+def compute_normalization_stats(
+        df: pd.DataFrame,
+        columns: list[str],
+        method: str = "zscore",
+        save_path: str = "cond_stats.json"
+) -> np.ndarray:
+    if os.path.exists(save_path):
+        with open(save_path, "r") as f:
+            stats_list = json.load(f)
+        return np.array(stats_list, dtype=np.float32)
+
+    stats_array = []
+    for col in columns:
+        if method == "zscore":
+            stats_array.append([float(df[col].mean()), float(df[col].std())])
+        elif method == "minmax":
+            stats_array.append([float(df[col].min()), float(df[col].max())])
+        else:
+            raise ValueError("Unknown method. Use 'zscore' or 'minmax'.")
+
+    # Save as list to make it JSON serializable
+    with open(save_path, "w") as f:
+        json.dump(stats_array, f, indent=4)
+
+    return np.array(stats_array, dtype=np.float32)
+
+
+def normalize_conditions(
+        values: np.ndarray,
+        stats: np.ndarray,
+        method: str = "zscore"
+) -> np.ndarray:
+
+    if method == "zscore":
+        mean = stats[:, 0]
+        std = stats[:, 1]
+        return (values - mean) / (std + 1e-8)
+
+    elif method == "minmax":
+        min_ = stats[:, 0]
+        max_ = stats[:, 1]
+        return (values - min_) / (max_ - min_ + 1e-8)
+
+    else:
+        raise ValueError("Unknown method")
+
+
+
+def prepare_condition_array(conds: list[float], stats_path="cond_stats.json", method="zscore"):
+    cond_stats = np.array(json.load(open(stats_path)))
+    cond_vals = np.array(conds, dtype=np.float32)
+    norm_vals = normalize_conditions(cond_vals, cond_stats, method=method)
+    return torch.from_numpy(norm_vals).float()
+

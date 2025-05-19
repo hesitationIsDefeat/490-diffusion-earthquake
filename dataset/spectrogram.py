@@ -4,6 +4,9 @@ import pandas as pd
 from PIL import Image
 from torch.utils.data import Dataset
 
+from utils.transform import normalize_conditions, compute_normalization_stats
+
+
 class SpectrogramDataset(Dataset):
     def __init__(self, data_path: str, spec_dir: str, spec_ext: str,
                  e_id_col: str, e_lat_col: str, e_lon_col: str,
@@ -19,6 +22,10 @@ class SpectrogramDataset(Dataset):
         self.mag_col = mag_col
         self.img_size = img_size
         self.color_mode = color_mode
+
+        self.cond_cols = [e_lat_col, e_lon_col, depth_col, mag_col]
+        self.cond_stats = compute_normalization_stats(self.df, self.cond_cols)
+
 
     def __len__(self):
         return len(self.df)
@@ -37,6 +44,8 @@ class SpectrogramDataset(Dataset):
             row[self.depth_col],
             row[self.mag_col]
         ], dtype=np.float32)
+
+        cond = normalize_conditions(cond, self.cond_stats)
 
         import torch
         spec_t = torch.from_numpy(spec).permute(2,0,1) if self.color_mode == 'color' \

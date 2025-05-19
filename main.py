@@ -12,7 +12,7 @@ from models.u_net import ConditionalUNet
 from sample import sample
 from train import train
 from utils.read_write import read_waveform_data, save_spectrogram_image
-from utils.transform import compute_spectrogram_raw, compute_spectrogram_labeled
+from utils.transform import compute_spectrogram_raw, compute_spectrogram_labeled, prepare_condition_array
 
 TESTING_LIMIT: int = 5
 
@@ -80,9 +80,13 @@ def main_sample(data_path: str, model_path: str, spec_dim: tuple[int, int], colo
     diffusion = Diffusion(device=device, timesteps=diff_ts, beta_start=diff_beta_start, beta_end=diff_beta_end)
 
     for idx, row in df.head(num_samples).iterrows():
-        cond = torch.tensor([
-            row[lat_col], row[lon_col], row[dep_col], row[mag_col]
-        ], dtype=torch.float32, device=device).unsqueeze(0)
+        cond = prepare_condition_array([
+            row[lat_col],
+            row[lon_col],
+            row[dep_col],
+            row[mag_col]]
+        ).unsqueeze(0).to(device)
+
 
         shape = (1, 3, *spec_dim) if color_mode == 'color' else (1, 1, *spec_dim)
         x_gen = sample(model, diffusion, cond, shape)
