@@ -17,12 +17,12 @@ class ConditionalUNet(nn.Module):
 
         self.init_conv = nn.Sequential(
             nn.Conv2d(in_channels, base_channels, 3, padding=1),
-            nn.BatchNorm2d(base_channels),  # added
+            nn.BatchNorm2d(base_channels),
             nn.GELU()
         )
 
         self.down1 = nn.Sequential(
-            nn.Conv2d(base_channels, base_channels * 2, 4, 2, 1),
+            nn.Conv2d(base_channels, base_channels * 2, 4, 2, 2),
             nn.BatchNorm2d(base_channels * 2),
         )
         self.film1 = FiLM(base_channels * 2, cond_dim + time_emb_dim)
@@ -36,7 +36,7 @@ class ConditionalUNet(nn.Module):
         self.mid = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
             nn.GELU(),
-            nn.Dropout(0.1),  # regularization
+            nn.Dropout(0.1),
             nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
         )
         self.film_mid = FiLM(base_channels * 4, cond_dim + time_emb_dim)
@@ -66,10 +66,30 @@ class ConditionalUNet(nn.Module):
         d2 = self.film2(self.down2(F.gelu(d1)), cond_emb)
         m = self.film_mid(self.mid(F.gelu(d2)), cond_emb)
 
+        d2 = self._center_crop_to_match(d2, m)
         u2 = self.film_up2(self.up2(torch.cat([m, d2], dim=1)), cond_emb)
+
+        d1 = self._center_crop_to_match(d1, u2)
         u1 = self.film_up1(self.up1(torch.cat([u2, d1], dim=1)), cond_emb)
 
-        return self.final(F.gelu(u1))
+        out = self.final(F.gelu(u1))
+
+        # Center-crop output to match input size
+        _, _, h_target, w_target = x.shape
+        _, _, h_out, w_out = out.shape
+        dh = (h_out - h_target) // 2
+        dw = (w_out - w_target) // 2
+        out = out[:, :, dh:dh + h_target, dw:dw + w_target]
+
+        return out
+
+    @staticmethod
+    def _center_crop_to_match(source, target):
+        _, _, h, w = source.shape
+        _, _, ht, wt = target.shape
+        dh = (h - ht) // 2
+        dw = (w - wt) // 2
+        return source[:, :, dh:dh+ht, dw:dw+wt]
 
 
 def sinusoidal_embedding(timesteps, dim):

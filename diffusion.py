@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 class Diffusion:
-    def __init__(self, device: torch.device, timesteps: int, beta_start: float, beta_end: float): # , timesteps=1000, beta_start=1e-4, beta_end=0.02
+    def __init__(self, device: torch.device, timesteps: int, beta_start: float, beta_end: float):
         self.timesteps = timesteps
         self.device = device
 

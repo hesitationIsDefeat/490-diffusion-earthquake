@@ -38,10 +38,7 @@ def compute_spectrogram_raw(waveform: np.ndarray,
     flipped_norm = np.flipud(norm)
 
     # Resize to maintain aspect ratio
-    orig_height, orig_width = flipped_norm.shape
-    aspect_ratio = orig_width / orig_height
-    target_width = int(round(output_height * aspect_ratio))
-    resized = resize(flipped_norm, (output_height, target_width), anti_aliasing=True)
+    resized = resize_image_by_height(flipped_norm, output_height)
 
     # Apply colormap
     if color_mode == 'grayscale':
@@ -143,4 +140,30 @@ def prepare_condition_array(conds: list[float], stats_path="cond_stats.json", me
     cond_vals = np.array(conds, dtype=np.float32)
     norm_vals = normalize_conditions(cond_vals, cond_stats, method=method)
     return torch.from_numpy(norm_vals).float()
+
+
+def resize_image_by_height(image, target_height):
+    # Determine image type and extract original width/height
+    if isinstance(image, Image.Image):
+        width, height = image.size
+        image_np = np.array(image)
+    elif isinstance(image, np.ndarray):
+        if image.ndim == 2:
+            height, width = image.shape
+        elif image.ndim == 3:
+            height, width, _ = image.shape
+        else:
+            raise ValueError("Unsupported image shape: must be 2D or 3D array.")
+        image_np = image
+    else:
+        raise TypeError("Input must be a PIL.Image or a numpy.ndarray.")
+
+    # Calculate new width based on aspect ratio
+    aspect_ratio = width / height
+    new_width = int(round(target_height * aspect_ratio))
+
+    # Resize with skimage
+    resized_image = resize(image_np, (target_height, new_width), anti_aliasing=True)
+
+    return resized_image
 
