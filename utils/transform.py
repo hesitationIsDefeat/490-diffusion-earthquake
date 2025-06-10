@@ -7,17 +7,20 @@ from matplotlib import cm, pyplot as plt
 from io import BytesIO
 from PIL import Image
 import torch
+import os
+import json
 
-
-def compute_spectrogram_raw(waveform: np.ndarray,
-                        samp_fs: float,
-                        output_height: int,
-                        nperseg: int = 256,
-                        noverlap: int = 128,
-                        freq_range: Tuple[float, float] = (0, 17),
-                        eps: float = 1e-9,
-                        dynamic_db_range: float = 60.0,
-                        color_mode: str = 'color') -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def compute_spectrogram_raw(
+    waveform: np.ndarray,
+    samp_fs: float,
+    output_height: int,
+    nperseg: int = 256,
+    noverlap: int = 128,
+    freq_range: Tuple[float, float] = (0, 17),
+    eps: float = 1e-9,
+    dynamic_db_range: float = 60.0,
+    color_mode: str = 'color'
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # Compute STFT
     f, t, Zxx = stft(waveform, fs=samp_fs, nperseg=nperseg, noverlap=noverlap, window='hann')
     magnitude = np.abs(Zxx)
@@ -37,8 +40,8 @@ def compute_spectrogram_raw(waveform: np.ndarray,
     # Flip vertically to match image coordinate system
     flipped_norm = np.flipud(norm)
 
-    # Resize to maintain aspect ratio
-    resized = resize_image_by_height(flipped_norm, output_height)
+    # Resize to maintain aspect ratio and final output size
+    resized = resize_image_by_height(flipped_norm, output_height)  # Only resize ONCE here
 
     # Apply colormap
     if color_mode == 'grayscale':
@@ -80,19 +83,13 @@ def compute_spectrogram_labeled(image: np.ndarray,
 
     return labeled_img
 
-
-import os
-import json
-import numpy as np
-import pandas as pd
-
-
 def compute_normalization_stats(
         df: pd.DataFrame,
         columns: list[str],
         method: str = "zscore",
         save_path: str = "cond_stats.json"
 ) -> np.ndarray:
+    # Only compute stats from training set and always save/load from the same file
     if os.path.exists(save_path):
         with open(save_path, "r") as f:
             stats_list = json.load(f)
@@ -113,34 +110,34 @@ def compute_normalization_stats(
 
     return np.array(stats_array, dtype=np.float32)
 
+def load_normalization_stats(stats_path: str):
+    # Utility to load stats for both training and sampling
+    with open(stats_path, "r") as f:
+        stats_list = json.load(f)
+    return np.array(stats_list, dtype=np.float32)
 
 def normalize_conditions(
         values: np.ndarray,
         stats: np.ndarray,
         method: str = "zscore"
 ) -> np.ndarray:
-
     if method == "zscore":
         mean = stats[:, 0]
         std = stats[:, 1]
         return (values - mean) / (std + 1e-8)
-
     elif method == "minmax":
         min_ = stats[:, 0]
         max_ = stats[:, 1]
         return (values - min_) / (max_ - min_ + 1e-8)
-
     else:
         raise ValueError("Unknown method")
 
-
-
 def prepare_condition_array(conds: list[float], stats_path="cond_stats.json", method="zscore"):
-    cond_stats = np.array(json.load(open(stats_path)))
+    # Always load stats from file for consistency
+    cond_stats = load_normalization_stats(stats_path)
     cond_vals = np.array(conds, dtype=np.float32)
     norm_vals = normalize_conditions(cond_vals, cond_stats, method=method)
     return torch.from_numpy(norm_vals).float()
-
 
 def resize_image_by_height(image, target_height):
     # Determine image type and extract original width/height
@@ -166,4 +163,3 @@ def resize_image_by_height(image, target_height):
     resized_image = resize(image_np, (target_height, new_width), anti_aliasing=True)
 
     return resized_image
-

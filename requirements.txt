@@ -67,7 +67,7 @@ soupsieve==2.7
 stack-data==0.6.3
 sympy==1.14.0
 tinycss2==1.4.0
-torch==2.7.0
+torch~=2.7.1
 tornado==6.4.2
 traitlets==5.14.3
 triton==3.3.0
@@ -84,3 +84,4 @@ imageio~=2.37.0
 matplotlib~=3.10.1
 scipy~=1.15.2
 scikit-image~=0.25.2
+torchvision~=0.22.1
