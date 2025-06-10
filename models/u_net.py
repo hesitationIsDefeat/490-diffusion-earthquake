@@ -54,8 +54,10 @@ class ConditionalUNet(nn.Module):
         self.film_up1 = FiLM(base_channels, cond_dim + time_emb_dim)
 
         self.final = nn.Conv2d(base_channels, in_channels, 1)
+        self.in_channels = in_channels
 
     def forward(self, x, t, cond):
+        assert x.shape[1] == self.in_channels, f"Input channels ({x.shape[1]}) do not match model ({self.in_channels})"
         t_emb = sinusoidal_embedding(t, self.time_mlp[0].in_features)
         t_emb = self.time_mlp(t_emb)
         cond_emb = torch.cat([cond, t_emb], dim=-1)
@@ -74,7 +76,6 @@ class ConditionalUNet(nn.Module):
 
         out = self.final(F.gelu(u1))
 
-        # Center-crop output to match input size
         _, _, h_target, w_target = x.shape
         _, _, h_out, w_out = out.shape
         dh = (h_out - h_target) // 2
