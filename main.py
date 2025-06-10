@@ -13,7 +13,12 @@ from models.u_net import ConditionalUNet
 from sample import sample
 from train import train
 from utils.read_write import read_waveform_data, save_spectrogram_image
-from utils.transform import compute_spectrogram_raw, compute_spectrogram_labeled, prepare_condition_array
+from utils.transform import (
+    compute_spectrogram_raw,
+    compute_spectrogram_labeled,
+    prepare_condition_array,
+    compute_normalization_stats
+)
 
 TESTING_LIMIT: int = 5
 
@@ -36,13 +41,17 @@ def main_preprocess(data_path: str, output_path: str, spec_height: int, spec_ext
         save_spectrogram_image(img=img, e_id=e_id, output_dir=output_path, extension=spec_ext, file_name='raw', color_mode=stft_color_mode)
         save_spectrogram_image(img=labeled_img, e_id=e_id, output_dir=output_path, extension=spec_ext, file_name='labeled', color_mode=stft_color_mode)
 
-
-
 def main_train(data_path: str, spec_dir: str, spec_height: int, color_mode: str, spec_ext: str,
                batch_size: int, epochs: int, lr: float,
                model_save_path: str, device_name: str,
                e_id_col: str, lat_col: str, lon_col: str, dep_col: str, mag_col: str,
                diff_ts: int, diff_beta_start: float, diff_beta_end: float):
+
+    df = pd.read_csv(data_path)
+
+    cond_columns = [lat_col, lon_col, dep_col, mag_col]
+    compute_normalization_stats(df, columns=cond_columns, save_path="cond_stats.json")
+
     dataset = SpectrogramDataset(
         data_path=data_path,
         spec_dir=spec_dir,
@@ -62,10 +71,7 @@ def main_train(data_path: str, spec_dir: str, spec_height: int, color_mode: str,
     model = ConditionalUNet(in_channels=(3 if color_mode == 'color' else 1)).to(device)
     diffusion = Diffusion(device=device, timesteps=diff_ts, beta_start=diff_beta_start, beta_end=diff_beta_end)
 
-    train(model, diffusion, dataloader, epochs=epochs, lr=lr)
-
-    torch.save(model.state_dict(), model_save_path)
-
+    train(model, diffusion, dataloader, epochs=epochs, lr=lr, model_save_path=model_save_path)
 
 def main_sample(data_path: str, model_path: str, spec_height: int, aspect_ratio_json_path: str, color_mode: str, spec_ext: str,
                 num_samples: int, sample_save_dir: str, device_name: str,
@@ -81,6 +87,11 @@ def main_sample(data_path: str, model_path: str, spec_height: int, aspect_ratio_
     model.load_state_dict(torch.load(model_path, map_location=device))
 
     diffusion = Diffusion(device=device, timesteps=diff_ts, beta_start=diff_beta_start, beta_end=diff_beta_end)
+
+    print("alpha_prod shape:", diffusion.alpha_prod.shape)
+    print("betas shape:", diffusion.betas.shape)
+    print("First 10 alpha_prod:", diffusion.alpha_prod[:10])
+    print("First 10 betas:", diffusion.betas[:10])
 
     if not os.path.exists(aspect_ratio_json_path):
         raise FileNotFoundError(f"Aspect ratio JSON file not found at: {aspect_ratio_json_path}")
@@ -107,21 +118,25 @@ def main_sample(data_path: str, model_path: str, spec_height: int, aspect_ratio_
         x_gen = sample(model, diffusion, cond, shape)
 
         img = x_gen.squeeze(0).cpu()  # (C, H, W)
-        if img.dim() == 3:
-            img = img.permute(1, 2, 0)  # (H, W, C)
 
-        img = x_gen.squeeze(0).cpu()
+        expected_channels = 3 if color_mode == 'color' else 1
+        assert img.shape[0] == expected_channels, f"Image channels ({img.shape[0]}) do not match model ({expected_channels})"
 
-        # Fix dimensions based on color mode
         if color_mode == 'color':
             img = img.permute(1, 2, 0)  # (C, H, W) → (H, W, C)
         else:
             img = img.squeeze(0)  # (1, H, W) → (H, W)
 
-        # Normalize and convert to uint8
-        img_min, img_max = img.min(), img.max()
-        img = (img - img_min) / (img_max - img_min + 1e-9)
+        print(f"Sampled tensor min/max BEFORE denorm: {img.min().item()} / {img.max().item()}")
+
+        # [-1, 1] to [0, 1]
+        img = (img + 1.0) / 2.0
+        img = torch.clamp(img, 0, 1)
+        print(f"Sampled tensor min/max AFTER denorm: {img.min().item()} / {img.max().item()}")
+
         img = (img * 255).round().to(torch.uint8).numpy()
+
+        print("Condition vector (normalized):", cond.cpu().numpy())
 
         save_spectrogram_image(
             img=img,
@@ -134,10 +149,10 @@ def main_sample(data_path: str, model_path: str, spec_height: int, aspect_ratio_
 SPEC_DIM_HEIGHT: int = 256
 SPEC_EXTENSION: str = "png"
 IS_TESTING: bool = False
-COLOR_MODE: str = "grayscale"
+COLOR_MODE: str = "color"
 BATCH_SIZE: int = 32
-LR: float = 1e-4
-EPOCHS: int = 300
+LR: float = 5e-4
+EPOCHS: int = 100
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Preprocess, Train, or Sample for diffusion STFT')
@@ -185,7 +200,7 @@ if __name__ == '__main__':
     p_sm.add_argument('--spec-aspect-ratio-path', type=str, default="spec_aspect_ratio.json")
     p_sm.add_argument('--spec-color-mode', choices=["grayscale", "color"], default=COLOR_MODE)
     p_sm.add_argument('--spec-ext', choices=["png"], default=SPEC_EXTENSION)
-    p_sm.add_argument('--num-samples', type=int, default=5)
+    p_sm.add_argument('--num-samples', type=int, default=20)
     p_sm.add_argument('--sample-save-dir', default="data/output/spec/ew")
     p_sm.add_argument('--device', default="cuda")
     p_sm.add_argument('--event-id-col', default="EventID", help='Name of the event id column')
