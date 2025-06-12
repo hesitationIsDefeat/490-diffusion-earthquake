@@ -1,6 +1,9 @@
 import os
 import argparse
 import json
+
+import numpy as np
+from PIL import Image
 from tqdm import tqdm
 
 import pandas as pd
@@ -18,7 +21,7 @@ from utils.transform import (
     compute_spectrogram_labeled,
     compute_global_db_stats,
     prepare_condition_array,
-    compute_normalization_stats
+    compute_normalization_stats, concat_images_with_padding
 )
 
 TESTING_LIMIT: int = 5
@@ -43,7 +46,11 @@ def main_preprocess(data_path: str, output_path: str, spec_height: int, spec_wid
             global_db_min=global_db_min,
             global_db_max=global_db_max
         )
-        labeled_img = compute_spectrogram_labeled(img, times, freq, norm, stft_color_mode)
+        if idx == 0:
+            meta_save_path = os.path.join('models', 'spectrogram_metadata.npz')
+            np.savez(meta_save_path, times=times, freq=freq, norm=norm)
+
+        labeled_img = compute_spectrogram_labeled(img, times, freq, norm, color_mode=stft_color_mode)
         save_spectrogram_image(img=img, e_id=e_id, output_dir=output_path, extension=spec_ext, file_name='raw', color_mode=stft_color_mode)
         save_spectrogram_image(img=labeled_img, e_id=e_id, output_dir=output_path, extension=spec_ext, file_name='labeled', color_mode=stft_color_mode)
 
@@ -95,6 +102,13 @@ def main_sample(data_path: str, model_path: str, spec_height: int, spec_width: i
 
     spec_dim = (spec_height, spec_width)  # (H, W)
 
+    data = np.load(os.path.join('models', 'spectrogram_metadata.npz'))
+
+    # Retrieve the arrays
+    times = data['times']
+    freq = data['freq']
+    norm = data['norm']
+
     for idx, row in tqdm(df.head(num_samples).iterrows(), total=num_samples, desc="Sampling Progress"):
         cond = prepare_condition_array([
             row[lat_col],
@@ -121,6 +135,8 @@ def main_sample(data_path: str, model_path: str, spec_height: int, spec_width: i
         img = img.clamp(0, 1)
         img = (img * 255).round().to(torch.uint8).cpu().numpy()
 
+        # labeled_img = compute_spectrogram_labeled(img, times, freq, norm, color_mode)
+
         save_spectrogram_image(
             img=img,
             e_id=row[e_id_col],
@@ -128,6 +144,10 @@ def main_sample(data_path: str, model_path: str, spec_height: int, spec_width: i
             extension=spec_ext,
             file_name='sample_raw',
             color_mode=color_mode)
+
+        # save_spectrogram_image(img=labeled_img, e_id=row[e_id_col], output_dir=sample_save_dir, extension=spec_ext, file_name='sample_labeled', color_mode=color_mode)
+        concat_img = concat_images_with_padding(img, os.path.join(sample_save_dir, str(row[e_id_col]), color_mode, 'labeled.png'))
+        Image.fromarray(concat_img).save(os.path.join(sample_save_dir, str(row[e_id_col]), color_mode, 'compare.png'))
 
 SPEC_DIM_HEIGHT: int = 256
 SPEC_DIM_WIDTH: int = 326
@@ -137,6 +157,7 @@ COLOR_MODE: str = "color"
 BATCH_SIZE: int = 16
 LR: float = 1e-4
 EPOCHS: int = 100
+DATA_NUM = 1183
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Preprocess, Train, or Sample for diffusion STFT')
@@ -186,7 +207,7 @@ if __name__ == '__main__':
     p_sm.add_argument('--spec-aspect-ratio-path', type=str, default="spec_aspect_ratio.json")
     p_sm.add_argument('--spec-color-mode', choices=["grayscale", "color"], default=COLOR_MODE)
     p_sm.add_argument('--spec-ext', choices=["png"], default=SPEC_EXTENSION)
-    p_sm.add_argument('--num-samples', type=int, default=100)
+    p_sm.add_argument('--num-samples', type=int, default=DATA_NUM)
     p_sm.add_argument('--sample-save-dir', default="data/output/spec/ew")
     p_sm.add_argument('--device', default="cuda")
     p_sm.add_argument('--event-id-col', default="EventID", help='Name of the event id column')

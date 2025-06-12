@@ -60,29 +60,51 @@ def compute_spectrogram_labeled(image: np.ndarray,
                                freqs: np.ndarray,
                                norm_data: np.ndarray,
                                color_mode: str = 'color') -> np.ndarray:
-    # Setup figure
-    cmap_func = cm.get_cmap('gray' if color_mode == 'grayscale' else 'inferno')
+    import matplotlib.pyplot as plt
+    from matplotlib import cm
+    from io import BytesIO
+    from PIL import Image
+    import numpy as np
 
-    # Add labels using matplotlib
+    # Use same colormap
+    cmap_name = 'gray' if color_mode == 'grayscale' else 'inferno'
+    cmap_func = cm.get_cmap(cmap_name)
+
+    # Determine image dimensions
     height, width = image.shape[:2]
+
+    # Create figure exactly sized to the image
     fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
+
+    # Set extent for proper labeling
     extent = (
         float(times[0]), float(times[-1]),
-        float(freqs[-1]), float(freqs[0])
+        float(freqs[-1]), float(freqs[0])  # freq flipped vertically
     )
-    ax.imshow(norm_data, aspect='auto', extent=extent, cmap=cmap_func)
-    plt.tight_layout()
 
-    # Save figure to numpy array
+    # Render with same color normalization
+    im = ax.imshow(norm_data, aspect='auto', extent=extent, cmap=cmap_func, vmin=0.0, vmax=1.0)
+
+    # Optional: label axes
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Frequency (Hz)")
+
+    # Optional: remove white borders
+    plt.tight_layout(pad=0)
+
+    # Save as image to memory buffer
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
     plt.close(fig)
+
+    # Convert to NumPy RGB image
     buf.seek(0)
     pil_img = Image.open(buf).convert("RGB")
     labeled_img = np.array(pil_img)
     buf.close()
 
     return labeled_img
+
 
 
 def compute_global_db_stats(csv_path):
@@ -155,31 +177,6 @@ def prepare_condition_array(conds: list[float], stats_path="cond_stats.json", me
     norm_vals = normalize_conditions(cond_vals, cond_stats, method=method)
     return torch.from_numpy(norm_vals).float()
 
-# def resize_image_by_height(image, target_height):
-#     # Determine image type and extract original width/height
-#     if isinstance(image, Image.Image):
-#         width, height = image.size
-#         image_np = np.array(image)
-#     elif isinstance(image, np.ndarray):
-#         if image.ndim == 2:
-#             height, width = image.shape
-#         elif image.ndim == 3:
-#             height, width, _ = image.shape
-#         else:
-#             raise ValueError("Unsupported image shape: must be 2D or 3D array.")
-#         image_np = image
-#     else:
-#         raise TypeError("Input must be a PIL.Image or a numpy.ndarray.")
-#
-#     # Calculate new width based on aspect ratio
-#     aspect_ratio = width / height
-#     new_width = int(round(target_height * aspect_ratio))
-#
-#     # Resize with skimage
-#     resized_image = resize(image_np, (target_height, new_width), anti_aliasing=True)
-#
-#     return resized_image
-
 def create_data_splits(dataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
     assert np.isclose(train_ratio + val_ratio + test_ratio, 1.0)
 
@@ -202,3 +199,40 @@ def create_data_splits(dataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15
     )
 
     return train_idx, val_idx, test_idx
+
+
+import numpy as np
+from PIL import Image
+
+
+def concat_images_with_padding(img_array: np.ndarray, img_path: str, padding: int = 10,
+                               pad_color=(255, 255, 255)) -> np.ndarray:
+    # Load second image from disk
+    img1 = Image.open(img_path).convert("RGB")
+    img1_np = np.array(img1)
+
+    # Ensure both images have 3 channels
+    if img_array.ndim == 2:  # Grayscale (H, W)
+        img2_np = np.stack([img_array] * 3, axis=-1)
+    elif img_array.shape[2] == 1:  # (H, W, 1)
+        img2_np = np.repeat(img_array, 3, axis=2)
+    else:
+        img2_np = img_array
+
+    # Resize the second image to match the height of the first
+    h1 = img1_np.shape[0]
+    h2 = img2_np.shape[0]
+
+    if h1 != h2:
+        scale = h1 / h2
+        new_w = int(img1_np.shape[1] * scale)
+        img1 = img1.resize((new_w, h1), Image.ANTIALIAS)
+        img1_np = np.array(img1)
+
+    # Create the padding
+    pad = np.full((h1, padding, 3), pad_color, dtype=np.uint8)
+
+    # Concatenate all
+    combined = np.concatenate([img1_np, pad, img2_np], axis=1)
+
+    return combined

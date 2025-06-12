@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,13 +32,25 @@ class ConditionalUNet(nn.Module):
         )
         self.film2 = FiLM(base_channels * 4, cond_dim + time_emb_dim)
 
+        self.down3 = nn.Sequential(
+            nn.Conv2d(base_channels * 4, base_channels * 8, 4, 2, 1),
+            nn.BatchNorm2d(base_channels * 8),
+        )
+        self.film3 = FiLM(base_channels * 8, cond_dim + time_emb_dim)
+
         self.mid = nn.Sequential(
-            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
+            nn.Conv2d(base_channels * 8, base_channels * 8, 3, padding=1),
             nn.GELU(),
             nn.Dropout(0.1),
-            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
+            nn.Conv2d(base_channels * 8, base_channels * 8, 3, padding=1),
         )
-        self.film_mid = FiLM(base_channels * 4, cond_dim + time_emb_dim)
+        self.film_mid = FiLM(base_channels * 8, cond_dim + time_emb_dim)
+
+        self.up3 = nn.Sequential(
+            nn.ConvTranspose2d(base_channels * 16, base_channels * 4, 4, 2, 1),
+            nn.BatchNorm2d(base_channels * 4),
+        )
+        self.film_up3 = FiLM(base_channels * 4, cond_dim + time_emb_dim)
 
         self.up2 = nn.Sequential(
             nn.ConvTranspose2d(base_channels * 8, base_channels * 2, 4, 2, 1),
@@ -66,10 +77,14 @@ class ConditionalUNet(nn.Module):
 
         d1 = self.film1(self.down1(h), cond_emb)
         d2 = self.film2(self.down2(F.gelu(d1)), cond_emb)
-        m = self.film_mid(self.mid(F.gelu(d2)), cond_emb)
+        d3 = self.film3(self.down3(F.gelu(d2)), cond_emb)
+        m = self.film_mid(self.mid(F.gelu(d3)), cond_emb)
 
-        d2 = self._center_crop_to_match(d2, m)
-        u2 = self.film_up2(self.up2(torch.cat([m, d2], dim=1)), cond_emb)
+        d3 = self._center_crop_to_match(d3, m)
+        u3 = self.film_up3(self.up3(torch.cat([m, d3], dim=1)), cond_emb)
+
+        d2 = self._center_crop_to_match(d2, u3)
+        u2 = self.film_up2(self.up2(torch.cat([u3, d2], dim=1)), cond_emb)
 
         d1 = self._center_crop_to_match(d1, u2)
         u1 = self.film_up1(self.up1(torch.cat([u2, d1], dim=1)), cond_emb)
