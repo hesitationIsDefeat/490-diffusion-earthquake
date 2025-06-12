@@ -20,8 +20,8 @@ def sample(
     step_ratio = T // inference_steps
     sample_timesteps = list(range(0, T, step_ratio))[::-1]
 
-    print("x min/max:", x.min().item(), x.max().item())
-    print("cond min/max:", cond.min().item(), cond.max().item())
+    #sample_timesteps = list(range(T - 1, -1, -1))
+
     if torch.isnan(x).any() or torch.isnan(cond).any():
         print("NaN detected in input!")
 
@@ -64,11 +64,6 @@ def sample(
                 x = mean + sigma_t * noise
             else:
                 x = mean
-
-        elif sampler_type == 'dpm_solver':
-            raise NotImplementedError(
-                "DPM-Solver is a complex ODE solver. Consider using an existing implementation like HuggingFace `diffusers`."
-            )
 
         else:
             raise ValueError(
