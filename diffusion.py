@@ -41,7 +41,7 @@ class Diffusion:
 
         return sqrt_alpha_prod * x0 + sqrt_one_minus_alpha_prod * noise
 
-    def p_losses(self, model, x0: torch.Tensor, t: torch.Tensor, cond: torch.Tensor, loss_type='huber') -> torch.Tensor:
+    def p_losses(self, model, x0: torch.Tensor, t: torch.Tensor, cond: torch.Tensor, loss_type='mse') -> torch.Tensor:
         noise = torch.randn_like(x0)
         x_noisy = self.q_sample(x0, t, noise)
         noise_pred = model(x_noisy, t, cond)
