@@ -2,41 +2,48 @@
 
 import torch
 from tqdm import tqdm
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset
+
+from test import evaluate_on_test_set
+from utils.transform import create_data_splits
 
 
 def train(
     model,
     diffusion,
-    dataloader,
-    epochs,
-    lr,
-    model_save_path,
-    patience: int = 10,
-    min_delta: float = 0.001,
+    dataset,
+    batch_size: int,
+    epochs: int,
+    lr: float,
+    model_save_path: str,
+    # TODO add patience: int
+    num_workers: int = 4,
+    min_delta: float = 0.0001,
 ):
+    patience = epochs / 10
+    train_idx, val_idx, test_idx = create_data_splits(dataset)
+
+    train_loader = DataLoader(
+        Subset(dataset, train_idx),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers
+    )
+
+    val_loader = DataLoader(
+        Subset(dataset, val_idx),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers
+    )
+
+    # Save test indices for later use
+    test_set = Subset(dataset, test_idx)
+    torch.save(test_idx, model_save_path.replace('.pt', '_test_indices.pt'))
+
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-
-    # Split into train and validation datasets
-    total_size = len(dataloader.dataset)
-    train_size = int(0.9 * total_size)
-    val_size = total_size - train_size
-    train_dataset, val_dataset = random_split(dataloader.dataset, [train_size, val_size])
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=dataloader.batch_size,
-        shuffle=True,
-        num_workers=dataloader.num_workers,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=dataloader.batch_size,
-        shuffle=False,
-        num_workers=dataloader.num_workers,
-    )
 
     best_val_loss = float("inf")
     epochs_no_improve = 0
@@ -56,7 +63,7 @@ def train(
 
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             train_loss_sum += loss.item()
@@ -99,3 +106,18 @@ def train(
 
     torch.save(model.state_dict(), model_save_path)
     print(f"Final model saved to {model_save_path}")
+
+    print("Evaluating best model on test set...")
+    model.load_state_dict(torch.load(best_model_path))
+    test_loss = evaluate_on_test_set(model, diffusion, test_set, batch_size, num_workers)
+    print(f"Test Loss: {test_loss:.4f}")
+
+    # Save test results
+    test_results = {
+        'test_loss': test_loss,
+        'best_val_loss': best_val_loss,
+        'test_indices': test_idx
+    }
+    torch.save(test_results, model_save_path.replace('.pt', '_test_results.pt'))
+
+    return test_results
