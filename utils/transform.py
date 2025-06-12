@@ -9,50 +9,51 @@ from PIL import Image
 import torch
 import os
 import json
+from sklearn.model_selection import train_test_split
+
 
 def compute_spectrogram_raw(
-    waveform: np.ndarray,
-    samp_fs: float,
-    output_height: int,
-    nperseg: int = 256,
-    noverlap: int = 128,
-    freq_range: Tuple[float, float] = (0, 17),
-    eps: float = 1e-9,
-    dynamic_db_range: float = 60.0,
-    color_mode: str = 'color'
+        waveform: np.ndarray,
+        samp_fs: float,
+        output_height: int,
+        output_width: int,  # Add fixed width
+        global_db_min: float,  # From dataset stats
+        global_db_max: float,  # From dataset stats
+        nperseg: int = 256,
+        noverlap: int = 128,
+        freq_range: Tuple[float, float] = (0, 17),
+        color_mode: str = 'color'
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    # Compute STFT
+    # STFT computation
     f, t, Zxx = stft(waveform, fs=samp_fs, nperseg=nperseg, noverlap=noverlap, window='hann')
-    magnitude = np.abs(Zxx)
-    db = 20 * np.log10(magnitude + eps)
 
-    # Crop frequency range
+    # Magnitude to dB with global scaling
+    magnitude = np.abs(Zxx)
+    db = 20 * np.log10(magnitude + 1e-9)
+
+    # Frequency cropping
     freq_mask = (f >= freq_range[0]) & (f <= freq_range[1])
     f_cropped = f[freq_mask]
     db_cropped = db[freq_mask, :]
 
-    # Normalize
-    db_max = np.max(db_cropped)
-    db_min = db_max - dynamic_db_range
-    db_cropped = np.clip(db_cropped, db_min, db_max)
-    norm = (db_cropped - db_min) / (db_max - db_min)
+    # Global normalization
+    db_clipped = np.clip(db_cropped, global_db_min, global_db_max)
+    norm = (db_clipped - global_db_min) / (global_db_max - global_db_min)
 
-    # Flip vertically to match image coordinate system
+    # Flip and resize
     flipped_norm = np.flipud(norm)
+    resized = resize(flipped_norm, (output_height, output_width),
+                     anti_aliasing=True, preserve_range=True)
 
-    # Resize to maintain aspect ratio and final output size
-    resized = resize_image_by_height(flipped_norm, output_height)  # Only resize ONCE here
-
-    # Apply colormap
+    # Color processing
     if color_mode == 'grayscale':
         img = (resized * 255).astype(np.uint8)
-    elif color_mode == 'color':
+        img = img[..., np.newaxis]  # (H, W, 1)
+    else: # color_mode == 'color':
         cmap_func = cm.get_cmap('inferno')
         img = (cmap_func(resized)[:, :, :3] * 255).astype(np.uint8)
-    else:
-        raise ValueError(f"Invalid color_mode '{color_mode}'.")
 
-    return img, t, f_cropped[::-1], resized  # Also return t, f for labeling; inverting freq for bottom to top labels
+    return img, t, f_cropped[::-1], resized
 
 def compute_spectrogram_labeled(image: np.ndarray,
                                times: np.ndarray,
@@ -82,6 +83,21 @@ def compute_spectrogram_labeled(image: np.ndarray,
     buf.close()
 
     return labeled_img
+
+
+def compute_global_db_stats(csv_path):
+    df = pd.read_csv(csv_path)
+    all_db = []
+
+    for i, row in df.iloc[:].iterrows():
+        waveform = row.iloc[14:].values.astype(np.float32)  # Adjust index
+        f, t, Zxx = stft(waveform, fs=100, nperseg=256)
+        magnitude = np.abs(Zxx)
+        db = 20 * np.log10(magnitude + 1e-9)
+        all_db.append(db)
+
+    all_db = np.concatenate(all_db)
+    return np.percentile(all_db, 1), np.percentile(all_db, 99)  # 1st and 99th percentiles
 
 def compute_normalization_stats(
         df: pd.DataFrame,
@@ -139,27 +155,50 @@ def prepare_condition_array(conds: list[float], stats_path="cond_stats.json", me
     norm_vals = normalize_conditions(cond_vals, cond_stats, method=method)
     return torch.from_numpy(norm_vals).float()
 
-def resize_image_by_height(image, target_height):
-    # Determine image type and extract original width/height
-    if isinstance(image, Image.Image):
-        width, height = image.size
-        image_np = np.array(image)
-    elif isinstance(image, np.ndarray):
-        if image.ndim == 2:
-            height, width = image.shape
-        elif image.ndim == 3:
-            height, width, _ = image.shape
-        else:
-            raise ValueError("Unsupported image shape: must be 2D or 3D array.")
-        image_np = image
-    else:
-        raise TypeError("Input must be a PIL.Image or a numpy.ndarray.")
+# def resize_image_by_height(image, target_height):
+#     # Determine image type and extract original width/height
+#     if isinstance(image, Image.Image):
+#         width, height = image.size
+#         image_np = np.array(image)
+#     elif isinstance(image, np.ndarray):
+#         if image.ndim == 2:
+#             height, width = image.shape
+#         elif image.ndim == 3:
+#             height, width, _ = image.shape
+#         else:
+#             raise ValueError("Unsupported image shape: must be 2D or 3D array.")
+#         image_np = image
+#     else:
+#         raise TypeError("Input must be a PIL.Image or a numpy.ndarray.")
+#
+#     # Calculate new width based on aspect ratio
+#     aspect_ratio = width / height
+#     new_width = int(round(target_height * aspect_ratio))
+#
+#     # Resize with skimage
+#     resized_image = resize(image_np, (target_height, new_width), anti_aliasing=True)
+#
+#     return resized_image
 
-    # Calculate new width based on aspect ratio
-    aspect_ratio = width / height
-    new_width = int(round(target_height * aspect_ratio))
+def create_data_splits(dataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
+    assert np.isclose(train_ratio + val_ratio + test_ratio, 1.0)
 
-    # Resize with skimage
-    resized_image = resize(image_np, (target_height, new_width), anti_aliasing=True)
+    # Get indices for all data points
+    indices = list(range(len(dataset)))
 
-    return resized_image
+    # First split: train and temp (val + test)
+    train_idx, temp_idx = train_test_split(
+        indices,
+        train_size=train_ratio,
+        random_state=seed
+    )
+
+    # Second split: val and test from temp
+    val_size = val_ratio / (val_ratio + test_ratio)
+    val_idx, test_idx = train_test_split(
+        temp_idx,
+        train_size=val_size,
+        random_state=seed
+    )
+
+    return train_idx, val_idx, test_idx
