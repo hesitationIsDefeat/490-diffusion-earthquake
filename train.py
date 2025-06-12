@@ -5,7 +5,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
 
 from test import evaluate_on_test_set
-from utils.transform import create_data_splits
+from utils.transform import create_data_splits, save_visual_sample, save_test_visuals
 
 
 def train(
@@ -49,6 +49,9 @@ def train(
     epochs_no_improve = 0
     best_model_path = model_save_path.replace(".pt", "_best.pt")
 
+    fixed_specs, fixed_conds = next(iter(val_loader))
+    fixed_specs, fixed_conds = fixed_specs[0:1].to(diffusion.device), fixed_conds[0:1].to(diffusion.device)
+
     for epoch in range(epochs):
         model.train()
         train_loss_sum = 0
@@ -89,6 +92,9 @@ def train(
         avg_val_loss = val_loss_sum / len(val_loader)
         print(f"[Epoch {epoch + 1}] Avg Val Loss: {avg_val_loss:.4f}")
 
+        if (epoch + 1) % 5 == 0:
+            save_visual_sample(model, fixed_specs, fixed_conds, epoch + 1, "data/output/visual_logs/train")
+
         scheduler.step()
 
         # Early Stopping
@@ -110,6 +116,7 @@ def train(
     print("Evaluating best model on test set...")
     model.load_state_dict(torch.load(best_model_path))
     test_loss = evaluate_on_test_set(model, diffusion, test_set, batch_size, num_workers)
+    save_test_visuals(model, diffusion, test_set, save_dir="data/output/visual_logs/test", num_samples=20, color_mode="color")
     print(f"Test Loss: {test_loss:.4f}")
 
     # Save test results

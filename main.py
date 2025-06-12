@@ -155,8 +155,8 @@ SPEC_EXTENSION: str = "png"
 IS_TESTING: bool = False
 COLOR_MODE: str = "color"
 BATCH_SIZE: int = 16
-LR: float = 1e-4
-EPOCHS: int = 100
+LR: float = 2e-5
+EPOCHS: int = 200
 DATA_NUM = 1183
 
 if __name__ == '__main__':

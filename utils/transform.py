@@ -10,6 +10,8 @@ import torch
 import os
 import json
 from sklearn.model_selection import train_test_split
+from torchvision.utils import make_grid
+import torchvision.transforms.functional as TF
 
 
 def compute_spectrogram_raw(
@@ -236,3 +238,96 @@ def concat_images_with_padding(img_array: np.ndarray, img_path: str, padding: in
     combined = np.concatenate([img1_np, pad, img2_np], axis=1)
 
     return combined
+
+def save_visual_sample(model, spec, cond, epoch, save_dir="data/output/visual_logs/train"):
+    import torchvision
+    os.makedirs(save_dir, exist_ok=True)
+    model.eval()
+
+    with torch.no_grad():
+        # Ensure batch dimension
+        if spec.dim() == 3:
+            spec = spec.unsqueeze(0)  # (C, H, W) -> (1, C, H, W)
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(0)  # (cond_dim) -> (1, cond_dim)
+
+        # Try calling model with (spec, cond), if fails, try (spec, t, cond)
+        try:
+            out = model(spec, cond)
+        except TypeError:
+            # If model expects (x, t, cond), provide t=0
+            t = torch.zeros(spec.shape[0], dtype=torch.long, device=spec.device)
+            out = model(spec, t, cond)
+
+        out = (out + 1) / 2
+        out = out.clamp(0, 1)
+
+        # Remove batch dimension for saving
+        out_img = out[0]
+        spec_img = spec[0]
+        # If single channel, squeeze to (H, W)
+        if out_img.shape[0] == 1:
+            out_img = out_img.squeeze(0)
+            spec_img = spec_img.squeeze(0)
+            mode = "L"
+        else:
+            mode = "RGB"
+
+        # Convert to PIL images
+        out_pil = TF.to_pil_image(out_img)
+        spec_pil = TF.to_pil_image(spec_img)
+
+        # Combine side by side with 10px padding
+        w, h = spec_pil.size
+        combined = Image.new(mode, (2 * w + 10, h))
+        combined.paste(spec_pil, (0, 0))
+        combined.paste(out_pil, (w + 10, 0))
+
+        filename = os.path.join(save_dir, f"epoch_{epoch}.png")
+        combined.save(filename)
+
+def save_test_visuals(model, diffusion, test_set, save_dir="data/output/visual_logs/test", num_samples=5, color_mode="color"):
+    import torchvision
+    os.makedirs(save_dir, exist_ok=True)
+    model.eval()
+
+    # Take only the first num_samples
+    specs = torch.stack([test_set[i][0] for i in range(num_samples)])
+    conds = torch.stack([test_set[i][1] for i in range(num_samples)])
+
+    specs, conds = specs.to(diffusion.device), conds.to(diffusion.device)
+
+    with torch.no_grad():
+        # Try calling model with (specs, conds), if fails, try (specs, t, conds)
+        try:
+            out = model(specs, conds)
+        except TypeError:
+            t = torch.zeros(specs.shape[0], dtype=torch.long, device=specs.device)
+            out = model(specs, t, conds)
+
+    out = (out + 1) / 2
+    out = out.clamp(0, 1)
+    specs = (specs + 1) / 2
+    specs = specs.clamp(0, 1)
+
+    for i in range(num_samples):
+        orig = specs[i]
+        gen = out[i]
+
+        # If single channel, squeeze to (H, W)
+        if orig.shape[0] == 1:
+            orig_img = TF.to_pil_image(orig.squeeze(0))
+            gen_img = TF.to_pil_image(gen.squeeze(0))
+            mode = "L"
+        else:
+            orig_img = TF.to_pil_image(orig)
+            gen_img = TF.to_pil_image(gen)
+            mode = "RGB"
+
+        w, h = orig_img.size
+        combined = Image.new(mode, (2 * w + 10, h))
+        combined.paste(orig_img, (0, 0))
+        combined.paste(gen_img, (w + 10, 0))
+
+        combined.save(os.path.join(save_dir, f"test_sample_{i + 1}.png"))
+
